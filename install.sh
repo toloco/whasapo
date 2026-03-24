@@ -29,6 +29,14 @@ if [ "${1:-}" = "--uninstall" ]; then
     info "=== Uninstalling Whasapo ==="
     echo ""
 
+    # Remove symlinks
+    for dir in /usr/local/bin "$HOME/.local/bin"; do
+        if [ -L "$dir/whasapo" ]; then
+            rm -f "$dir/whasapo"
+            echo "Removed $dir/whasapo"
+        fi
+    done
+
     if [ -d "$INSTALL_DIR" ]; then
         # Keep session.db backup just in case
         if [ -f "$INSTALL_DIR/session.db" ]; then
@@ -143,6 +151,21 @@ chmod +x "$BINARY"
 xattr -d com.apple.quarantine "$BINARY" 2>/dev/null || true
 
 ok "Binary installed to $BINARY"
+
+# Add to PATH via symlink
+LINK_DIR="/usr/local/bin"
+if [ -d "$LINK_DIR" ] && [ -w "$LINK_DIR" ]; then
+    ln -sf "$BINARY" "$LINK_DIR/whasapo"
+    echo "  Linked to $LINK_DIR/whasapo"
+else
+    LINK_DIR="$HOME/.local/bin"
+    mkdir -p "$LINK_DIR"
+    ln -sf "$BINARY" "$LINK_DIR/whasapo"
+    echo "  Linked to $LINK_DIR/whasapo"
+    if ! echo "$PATH" | tr ':' '\n' | grep -q "$LINK_DIR"; then
+        warn "  Add this to your shell profile: export PATH=\"$LINK_DIR:\$PATH\""
+    fi
+fi
 echo ""
 
 # --- Configure Claude desktop ---
