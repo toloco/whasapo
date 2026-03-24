@@ -1,12 +1,18 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,6 +28,8 @@ import (
 
 	"github.com/toloco/whasapo/whatsapp"
 )
+
+const repoAPI = "https://api.github.com/repos/toloco/whasapo/releases/latest"
 
 var version = "dev"
 
@@ -40,6 +48,8 @@ func main() {
 		cmdServe()
 	case "status":
 		cmdStatus()
+	case "update":
+		cmdUpdate()
 	case "uninstall":
 		cmdUninstall()
 	case "version", "--version", "-v":
@@ -60,6 +70,7 @@ Usage:
   whasapo pair        Link your WhatsApp account (scan QR code)
   whasapo serve       Start the MCP server (used by Claude)
   whasapo status      Check connection status
+  whasapo update      Update to the latest version
   whasapo uninstall   Remove whasapo and clean up
   whasapo version     Print version
 
@@ -178,6 +189,13 @@ func cmdServe() {
 	cancel()
 	fmt.Fprintf(os.Stderr, "whasapo: connected\n")
 	defer wa.Disconnect()
+
+	// Check for updates in background
+	go func() {
+		if latest, newer := checkForUpdate(); newer {
+			fmt.Fprintf(os.Stderr, "whasapo: update available (%s → %s), run 'whasapo update'\n", version, latest)
+		}
+	}()
 
 	s := server.NewMCPServer(
 		"whasapo",
@@ -356,6 +374,144 @@ func handleSearchContacts(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 	}
 	data, _ := json.MarshalIndent(contacts, "", "  ")
 	return mcp.NewToolResultText(string(data)), nil
+}
+
+// --- update command ---
+
+type ghRelease struct {
+	TagName string `json:"tag_name"`
+	Assets  []struct {
+		Name               string `json:"name"`
+		BrowserDownloadURL string `json:"browser_download_url"`
+	} `json:"assets"`
+}
+
+func checkForUpdate() (latest string, newer bool) {
+	if version == "dev" {
+		return "", false
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(repoAPI)
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", false
+	}
+	var rel ghRelease
+	if json.NewDecoder(resp.Body).Decode(&rel) != nil {
+		return "", false
+	}
+	latest = strings.TrimPrefix(rel.TagName, "v")
+	return latest, latest != version && latest > version
+}
+
+func cmdUpdate() {
+	fmt.Printf("Current version: %s\n", version)
+
+	if version == "dev" {
+		fmt.Println("Running a dev build — update from GitHub releases manually.")
+		return
+	}
+
+	fmt.Println("Checking for updates...")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(repoAPI)
+	if err != nil {
+		fatal("Failed to check for updates: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		fatal("GitHub API returned %d", resp.StatusCode)
+	}
+
+	var rel ghRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		fatal("Failed to parse release info: %v", err)
+	}
+
+	latest := strings.TrimPrefix(rel.TagName, "v")
+	if latest == version || latest <= version {
+		fmt.Printf("Already up to date (%s).\n", version)
+		return
+	}
+
+	// Find macOS zip asset
+	var downloadURL string
+	for _, a := range rel.Assets {
+		if strings.Contains(a.Name, "macos") && strings.HasSuffix(a.Name, ".zip") {
+			downloadURL = a.BrowserDownloadURL
+			break
+		}
+	}
+	if downloadURL == "" {
+		fatal("No macOS release found for %s", rel.TagName)
+	}
+
+	fmt.Printf("Updating %s → %s...\n", version, latest)
+
+	// Download
+	dlResp, err := client.Get(downloadURL)
+	if err != nil {
+		fatal("Download failed: %v", err)
+	}
+	defer dlResp.Body.Close()
+	zipData, err := io.ReadAll(dlResp.Body)
+	if err != nil {
+		fatal("Download failed: %v", err)
+	}
+
+	// Extract binary from zip
+	zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+	if err != nil {
+		fatal("Failed to read zip: %v", err)
+	}
+
+	var newBinary []byte
+	for _, f := range zr.File {
+		if f.Name == "whasapo" {
+			rc, err := f.Open()
+			if err != nil {
+				fatal("Failed to extract: %v", err)
+			}
+			newBinary, err = io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				fatal("Failed to read binary: %v", err)
+			}
+			break
+		}
+	}
+	if newBinary == nil {
+		fatal("Binary not found in zip")
+	}
+
+	// Replace current binary
+	exePath, err := os.Executable()
+	if err != nil {
+		fatal("Can't find current binary path: %v", err)
+	}
+	exePath, err = filepath.EvalSymlinks(exePath)
+	if err != nil {
+		fatal("Can't resolve binary path: %v", err)
+	}
+
+	// Write new binary next to old, then rename (atomic on same filesystem)
+	tmpPath := exePath + ".new"
+	if err := os.WriteFile(tmpPath, newBinary, 0755); err != nil {
+		fatal("Failed to write update: %v", err)
+	}
+	if err := os.Rename(tmpPath, exePath); err != nil {
+		os.Remove(tmpPath)
+		fatal("Failed to replace binary: %v", err)
+	}
+
+	// Remove quarantine
+	exec.Command("xattr", "-d", "com.apple.quarantine", exePath).Run()
+
+	fmt.Printf("Updated to %s!\n", latest)
 }
 
 // --- helpers ---
