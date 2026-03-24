@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build universal macOS binary
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          LDFLAGS="-s -w -X main.version=$VERSION"
+
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o whasapo-arm64 ./cmd/whasapo
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o whasapo-amd64 ./cmd/whasapo
+
+          lipo -create -output whasapo whasapo-arm64 whasapo-amd64
+          rm whasapo-arm64 whasapo-amd64
+
+          zip whasapo-${VERSION}-macos.zip whasapo
+          shasum -a 256 whasapo-${VERSION}-macos.zip > whasapo-${VERSION}-macos.zip.sha256
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            whasapo-*-macos.zip
+            whasapo-*-macos.zip.sha256
