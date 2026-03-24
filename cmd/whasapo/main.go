@@ -78,7 +78,7 @@ func cmdPair() {
 	store.SetOSInfo("Whasapo", [3]uint32{0, 1, 0})
 
 	container, err := sqlstore.New(context.Background(), "sqlite",
-		fmt.Sprintf("file:%s?_pragma=foreign_keys(1)", dbPath),
+		fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", dbPath),
 		waLog.Stdout("DB", "WARN", true),
 	)
 	if err != nil {
