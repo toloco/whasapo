@@ -10,10 +10,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -136,8 +134,9 @@ func cmdPair() {
 			if evt.Event == "success" {
 				fmt.Println()
 				fmt.Println("Paired successfully!")
-				fmt.Println()
-				fmt.Println("Syncing contacts... (wait 10 seconds then press Ctrl+C)")
+				if client.Store.ID != nil {
+					fmt.Printf("Account: %s\n", client.Store.ID.User)
+				}
 			} else {
 				fmt.Fprintf(os.Stderr, "Pairing failed: %s\n", evt.Event)
 				client.Disconnect()
@@ -147,18 +146,17 @@ func cmdPair() {
 		}
 	}
 
-	// Wait for sync then exit
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	select {
-	case <-c:
-	case <-time.After(15 * time.Second):
-		fmt.Println("Sync complete.")
+	// Sync contacts automatically
+	fmt.Print("Syncing contacts")
+	for i := 0; i < 10; i++ {
+		time.Sleep(time.Second)
+		fmt.Print(".")
 	}
-	client.Disconnect()
+	fmt.Println(" done!")
 
+	client.Disconnect()
 	fmt.Println()
-	fmt.Println("Done! Restart the Claude desktop app to start using WhatsApp.")
+	fmt.Println("Restart the Claude desktop app to start using WhatsApp.")
 }
 
 // --- serve command ---
