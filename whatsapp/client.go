@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -247,7 +248,8 @@ func (c *Client) SearchContacts(ctx context.Context, query string) ([]ChatInfo, 
 	var results []ChatInfo
 	for jid, info := range contacts {
 		name := contactName(info)
-		if containsCI(name, query) || containsCI(jid.User, query) {
+		lowerQuery := strings.ToLower(query)
+		if strings.Contains(strings.ToLower(name), lowerQuery) || strings.Contains(jid.User, lowerQuery) {
 			results = append(results, ChatInfo{
 				JID:     jid.String(),
 				Name:    name,
@@ -290,36 +292,6 @@ func contactName(c types.ContactInfo) string {
 		return c.FirstName
 	}
 	return ""
-}
-
-func containsCI(s, sub string) bool {
-	if sub == "" {
-		return true
-	}
-	ls := toLower(s)
-	lsub := toLower(sub)
-	return len(ls) >= len(lsub) && contains(ls, lsub)
-}
-
-func toLower(s string) string {
-	b := make([]byte, len(s))
-	for i := range s {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		b[i] = c
-	}
-	return string(b)
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
 
 func truncate(s string, max int) string {
