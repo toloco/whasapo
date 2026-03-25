@@ -160,7 +160,23 @@ func extractText(msg *waE2E.Message) string {
 	if stk := msg.GetStickerMessage(); stk != nil {
 		return "[sticker]"
 	}
-	return ""
+	if loc := msg.GetLocationMessage(); loc != nil {
+		name := loc.GetName()
+		if name != "" {
+			return "[location] " + name
+		}
+		return fmt.Sprintf("[location] %.4f, %.4f", loc.GetDegreesLatitude(), loc.GetDegreesLongitude())
+	}
+	if con := msg.GetContactMessage(); con != nil {
+		return "[contact] " + con.GetDisplayName()
+	}
+	if poll := msg.GetPollCreationMessage(); poll != nil {
+		return "[poll] " + poll.GetName()
+	}
+	if li := msg.GetListMessage(); li != nil {
+		return li.GetTitle() + ": " + li.GetDescription()
+	}
+	return "[unsupported]"
 }
 
 // SendMessage sends a text message to a JID string.
