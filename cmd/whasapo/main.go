@@ -237,8 +237,19 @@ func cmdServe() {
 		),
 	), handleSearchContacts)
 
+	// Graceful shutdown on signal
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		<-c
+		fmt.Fprintf(os.Stderr, "whasapo: shutting down...\n")
+		wa.Disconnect()
+		os.Exit(0)
+	}()
+
 	if err := server.ServeStdio(s); err != nil {
 		fmt.Fprintf(os.Stderr, "whasapo: server error: %v\n", err)
+		wa.Disconnect()
 		os.Exit(1)
 	}
 }
