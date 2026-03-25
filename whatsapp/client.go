@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"strings"
@@ -20,7 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// StoredMessage holds a received message in memory.
+// StoredMessage holds a message.
 type StoredMessage struct {
 	ID        string    `json:"id"`
 	Chat      string    `json:"chat"`
@@ -41,26 +42,27 @@ type ChatInfo struct {
 	LastTime string `json:"last_time,omitempty"`
 }
 
-// Client wraps whatsmeow with message storage.
+// Client wraps whatsmeow with persistent message storage.
 type Client struct {
 	WM        *whatsmeow.Client
 	Container *sqlstore.Container
-	messages  []StoredMessage
-	mu        sync.RWMutex
-	maxMsgs   int
+	db        *sql.DB
 	connected chan struct{}
 	ready     atomic.Bool
 	loggedOut atomic.Bool
+	names     map[string]string // cached JID -> display name
+	namesMu   sync.RWMutex
 }
+
+const dsn = "file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 
 // NewClient creates the WhatsApp client with a SQLite session store.
 func NewClient(dbPath string) (*Client, error) {
 	store.SetOSInfo("Whasapo MCP", [3]uint32{0, 1, 0})
 
-	container, err := sqlstore.New(context.Background(), "sqlite",
-		fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", dbPath),
-		waLog.Noop,
-	)
+	connStr := fmt.Sprintf(dsn, dbPath)
+
+	container, err := sqlstore.New(context.Background(), "sqlite", connStr, waLog.Noop)
 	if err != nil {
 		return nil, fmt.Errorf("sqlstore: %w", err)
 	}
@@ -70,17 +72,52 @@ func NewClient(dbPath string) (*Client, error) {
 		return nil, fmt.Errorf("get device: %w", err)
 	}
 
+	// Open a separate connection for message storage
+	db, err := sql.Open("sqlite", connStr)
+	if err != nil {
+		return nil, fmt.Errorf("open message db: %w", err)
+	}
+
+	if err := initMessageTable(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("init messages: %w", err)
+	}
+
 	wm := whatsmeow.NewClient(deviceStore, waLog.Noop)
 
 	c := &Client{
 		WM:        wm,
 		Container: container,
-		maxMsgs:   5000,
+		db:        db,
 		connected: make(chan struct{}),
+		names:     make(map[string]string),
 	}
 
 	wm.AddEventHandler(c.eventHandler)
 	return c, nil
+}
+
+func initMessageTable(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS messages (
+		id TEXT NOT NULL,
+		chat TEXT NOT NULL,
+		sender TEXT NOT NULL,
+		push_name TEXT NOT NULL DEFAULT '',
+		text TEXT NOT NULL,
+		timestamp INTEGER NOT NULL,
+		is_from_me INTEGER NOT NULL DEFAULT 0,
+		is_group INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (id, chat)
+	)`)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat, timestamp DESC)`)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(timestamp DESC)`)
+	return err
 }
 
 // IsPaired returns true if we have a stored session.
@@ -93,7 +130,6 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err := c.WM.Connect(); err != nil {
 		return err
 	}
-	// Wait for Connected event or timeout
 	select {
 	case <-c.connected:
 		return nil
@@ -105,6 +141,9 @@ func (c *Client) Connect(ctx context.Context) error {
 // Disconnect cleanly disconnects.
 func (c *Client) Disconnect() {
 	c.WM.Disconnect()
+	if c.db != nil {
+		c.db.Close()
+	}
 }
 
 // IsReady returns true if connected to WhatsApp and session is valid.
@@ -142,7 +181,17 @@ func (c *Client) eventHandler(evt interface{}) {
 		if text == "" {
 			return
 		}
-		msg := StoredMessage{
+		// Cache the push name
+		if v.Info.PushName != "" {
+			c.namesMu.Lock()
+			c.names[v.Info.Sender.String()] = v.Info.PushName
+			if v.Info.IsGroup {
+				// For groups, cache the chat JID with the group name from push events
+				// The actual group name comes from contact store, but push_name helps
+			}
+			c.namesMu.Unlock()
+		}
+		c.storeMessage(StoredMessage{
 			ID:        string(v.Info.ID),
 			Chat:      v.Info.Chat.String(),
 			Sender:    v.Info.Sender.String(),
@@ -151,13 +200,27 @@ func (c *Client) eventHandler(evt interface{}) {
 			Timestamp: v.Info.Timestamp,
 			IsFromMe:  v.Info.IsFromMe,
 			IsGroup:   v.Info.IsGroup,
-		}
-		c.mu.Lock()
-		c.messages = append(c.messages, msg)
-		if len(c.messages) > c.maxMsgs {
-			c.messages = c.messages[len(c.messages)-c.maxMsgs:]
-		}
-		c.mu.Unlock()
+		})
+	}
+}
+
+func (c *Client) storeMessage(msg StoredMessage) {
+	isFromMe := 0
+	if msg.IsFromMe {
+		isFromMe = 1
+	}
+	isGroup := 0
+	if msg.IsGroup {
+		isGroup = 1
+	}
+	_, err := c.db.Exec(
+		`INSERT OR IGNORE INTO messages (id, chat, sender, push_name, text, timestamp, is_from_me, is_group)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		msg.ID, msg.Chat, msg.Sender, msg.PushName, msg.Text,
+		msg.Timestamp.Unix(), isFromMe, isGroup,
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "whasapo: failed to store message: %v\n", err)
 	}
 }
 
@@ -217,57 +280,94 @@ func (c *Client) SendMessage(ctx context.Context, jidStr, text string) error {
 	return err
 }
 
-// GetMessages returns stored messages, optionally filtered by chat JID.
+// GetMessages returns messages from SQLite, optionally filtered by chat.
 func (c *Client) GetMessages(chatFilter string, limit int) []StoredMessage {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	var result []StoredMessage
-	for i := len(c.messages) - 1; i >= 0 && len(result) < limit; i-- {
-		m := c.messages[i]
-		if chatFilter == "" || m.Chat == chatFilter {
-			result = append(result, m)
-		}
+	var rows *sql.Rows
+	var err error
+	if chatFilter != "" {
+		rows, err = c.db.Query(
+			`SELECT id, chat, sender, push_name, text, timestamp, is_from_me, is_group
+			 FROM messages WHERE chat = ? ORDER BY timestamp DESC LIMIT ?`,
+			chatFilter, limit,
+		)
+	} else {
+		rows, err = c.db.Query(
+			`SELECT id, chat, sender, push_name, text, timestamp, is_from_me, is_group
+			 FROM messages ORDER BY timestamp DESC LIMIT ?`,
+			limit,
+		)
 	}
-	// Reverse to chronological order
-	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
-		result[i], result[j] = result[j], result[i]
+	if err != nil {
+		return nil
 	}
-	return result
-}
+	defer rows.Close()
 
-// GetChats returns known chats from contacts + recent messages.
-func (c *Client) GetChats(ctx context.Context) ([]ChatInfo, error) {
-	seen := make(map[string]bool)
-	var chats []ChatInfo
-
-	// From recent messages (most relevant)
-	c.mu.RLock()
-	for i := len(c.messages) - 1; i >= 0; i-- {
-		m := c.messages[i]
-		if seen[m.Chat] {
+	var msgs []StoredMessage
+	for rows.Next() {
+		var m StoredMessage
+		var ts int64
+		var fromMe, group int
+		if err := rows.Scan(&m.ID, &m.Chat, &m.Sender, &m.PushName, &m.Text, &ts, &fromMe, &group); err != nil {
 			continue
 		}
-		seen[m.Chat] = true
-		name := c.resolveName(ctx, m.Chat)
-		jid, _ := types.ParseJID(m.Chat)
+		m.Timestamp = time.Unix(ts, 0)
+		m.IsFromMe = fromMe == 1
+		m.IsGroup = group == 1
+		msgs = append(msgs, m)
+	}
+	// Reverse to chronological order (query returns newest first)
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	return msgs
+}
+
+// GetChats returns known chats from stored messages + joined groups.
+func (c *Client) GetChats(ctx context.Context) ([]ChatInfo, error) {
+	// Query distinct chats with their most recent message
+	rows, err := c.db.Query(`
+		SELECT chat, push_name, text, timestamp, is_group
+		FROM messages
+		WHERE (chat, timestamp) IN (
+			SELECT chat, MAX(timestamp) FROM messages GROUP BY chat
+		)
+		ORDER BY timestamp DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	seen := make(map[string]bool)
+	var chats []ChatInfo
+	for rows.Next() {
+		var chat, pushName, text string
+		var ts int64
+		var isGroup int
+		if err := rows.Scan(&chat, &pushName, &text, &ts, &isGroup); err != nil {
+			continue
+		}
+		seen[chat] = true
+		name := c.resolveNameCached(ctx, chat)
 		chats = append(chats, ChatInfo{
-			JID:     m.Chat,
-			Name:    name,
-			IsGroup: jid.Server == types.GroupServer,
-			LastMsg: truncate(m.Text, 100),
-			LastTime: m.Timestamp.Format(time.RFC3339),
+			JID:      chat,
+			Name:     name,
+			IsGroup:  isGroup == 1,
+			LastMsg:  truncate(text, 100),
+			LastTime: time.Unix(ts, 0).Format(time.RFC3339),
 		})
 	}
-	c.mu.RUnlock()
 
-	// Also add joined groups
+	// Also add joined groups not yet seen
 	groups, err := c.WM.GetJoinedGroups(ctx)
 	if err == nil {
 		for _, g := range groups {
 			jidStr := g.JID.String()
 			if !seen[jidStr] {
 				seen[jidStr] = true
+				c.namesMu.Lock()
+				c.names[jidStr] = g.Name
+				c.namesMu.Unlock()
 				chats = append(chats, ChatInfo{
 					JID:     jidStr,
 					Name:    g.Name,
@@ -287,9 +387,9 @@ func (c *Client) SearchContacts(ctx context.Context, query string) ([]ChatInfo, 
 		return nil, err
 	}
 	var results []ChatInfo
+	lowerQuery := strings.ToLower(query)
 	for jid, info := range contacts {
 		name := contactName(info)
-		lowerQuery := strings.ToLower(query)
 		if strings.Contains(strings.ToLower(name), lowerQuery) || strings.Contains(jid.User, lowerQuery) {
 			results = append(results, ChatInfo{
 				JID:     jid.String(),
@@ -301,21 +401,32 @@ func (c *Client) SearchContacts(ctx context.Context, query string) ([]ChatInfo, 
 	return results, nil
 }
 
-func (c *Client) resolveName(ctx context.Context, jidStr string) string {
+// resolveNameCached returns a display name without making network calls.
+func (c *Client) resolveNameCached(ctx context.Context, jidStr string) string {
+	// Check our push name cache first
+	c.namesMu.RLock()
+	if name, ok := c.names[jidStr]; ok {
+		c.namesMu.RUnlock()
+		return name
+	}
+	c.namesMu.RUnlock()
+
+	// Try the contact store (local, no network call)
 	jid, err := types.ParseJID(jidStr)
 	if err != nil {
 		return jidStr
 	}
-	if jid.Server == types.GroupServer {
-		info, err := c.WM.GetGroupInfo(ctx, jid)
-		if err == nil {
-			return info.Name
-		}
-	}
 	contact, err := c.WM.Store.Contacts.GetContact(ctx, jid)
 	if err == nil && contact.Found {
-		return contactName(contact)
+		name := contactName(contact)
+		if name != "" {
+			c.namesMu.Lock()
+			c.names[jidStr] = name
+			c.namesMu.Unlock()
+			return name
+		}
 	}
+
 	return jidStr
 }
 
