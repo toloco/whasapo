@@ -3,7 +3,9 @@ package whatsapp
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -46,6 +48,8 @@ type Client struct {
 	mu        sync.RWMutex
 	maxMsgs   int
 	connected chan struct{}
+	ready     atomic.Bool
+	loggedOut atomic.Bool
 }
 
 // NewClient creates the WhatsApp client with a SQLite session store.
@@ -102,15 +106,36 @@ func (c *Client) Disconnect() {
 	c.WM.Disconnect()
 }
 
+// IsReady returns true if connected to WhatsApp and session is valid.
+func (c *Client) IsReady() bool {
+	return c.ready.Load() && !c.loggedOut.Load()
+}
+
+// IsLoggedOut returns true if WhatsApp has invalidated the session.
+func (c *Client) IsLoggedOut() bool {
+	return c.loggedOut.Load()
+}
+
 func (c *Client) eventHandler(evt interface{}) {
 	switch v := evt.(type) {
 	case *events.Connected:
+		c.ready.Store(true)
+		fmt.Fprintf(os.Stderr, "whasapo: whatsapp connected\n")
 		select {
 		case <-c.connected:
-			// already closed
 		default:
 			close(c.connected)
 		}
+	case *events.Disconnected:
+		c.ready.Store(false)
+		fmt.Fprintf(os.Stderr, "whasapo: whatsapp disconnected, will reconnect automatically\n")
+	case *events.LoggedOut:
+		c.ready.Store(false)
+		c.loggedOut.Store(true)
+		fmt.Fprintf(os.Stderr, "whasapo: session expired — run 'whasapo pair' to re-link\n")
+	case *events.StreamReplaced:
+		c.ready.Store(false)
+		fmt.Fprintf(os.Stderr, "whasapo: connection replaced by another client\n")
 	case *events.Message:
 		text := extractText(v.Message)
 		if text == "" {
