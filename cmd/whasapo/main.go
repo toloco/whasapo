@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -331,7 +333,20 @@ func cmdUninstall() {
 
 // --- tool handlers ---
 
+func checkConnection() *mcp.CallToolResult {
+	if wa.IsLoggedOut() {
+		return mcp.NewToolResultError("WhatsApp session expired. Run 'whasapo pair' to re-link your account.")
+	}
+	if !wa.IsReady() {
+		return mcp.NewToolResultError("WhatsApp is reconnecting. Try again in a few seconds.")
+	}
+	return nil
+}
+
 func handleSendMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if err := checkConnection(); err != nil {
+		return err, nil
+	}
 	to, _ := req.RequireString("to")
 	msg, _ := req.RequireString("message")
 	if to == "" || msg == "" {
@@ -344,6 +359,9 @@ func handleSendMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
 }
 
 func handleListChats(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if err := checkConnection(); err != nil {
+		return err, nil
+	}
 	chats, err := wa.GetChats(ctx)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to list chats: %v", err)), nil
@@ -370,6 +388,9 @@ func handleGetMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
 }
 
 func handleSearchContacts(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if err := checkConnection(); err != nil {
+		return err, nil
+	}
 	query, _ := req.RequireString("query")
 	if query == "" {
 		return mcp.NewToolResultError("'query' is required"), nil
