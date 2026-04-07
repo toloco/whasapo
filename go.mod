@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/mark3labs/mcp-go v0.32.0
 	github.com/mdp/qrterminal/v3 v3.2.0
-	go.mau.fi/whatsmeow v0.0.0-20260321154921-234105b0ae55
+	go.mau.fi/whatsmeow v0.0.0-20260327181659-02ec817e7cf4
 	google.golang.org/protobuf v1.36.11
 	modernc.org/sqlite v1.47.0
 )
