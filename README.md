@@ -1,6 +1,6 @@
 # Whasapo
 
-WhatsApp integration for the Claude desktop app. Send and read WhatsApp messages through Claude.
+WhatsApp MCP server. Send and read WhatsApp messages from any AI assistant that supports [MCP](https://modelcontextprotocol.io/) — Claude desktop, Claude Code, OpenClaw, and more.
 
 ## Install
 
@@ -13,23 +13,105 @@ This will:
 2. Configure the Claude desktop app
 3. Walk you through linking your WhatsApp account (QR code scan)
 
-After install, **restart the Claude desktop app**.
+After install, **restart your AI app**.
+
+## Setup by app
+
+### Claude Desktop
+
+The installer configures this automatically. If you need to do it manually, add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "~/.whasapo/whasapo",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop. The WhatsApp tools will be available immediately.
+
+### Claude Code
+
+Add the MCP server to your project or global settings:
+
+```bash
+claude mcp add whatsapp ~/.whasapo/whasapo serve
+```
+
+Or add to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "~/.whasapo/whasapo",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+### OpenClaw
+
+In OpenClaw settings, add a new MCP server:
+
+- **Name:** whatsapp
+- **Command:** `~/.whasapo/whasapo`
+- **Arguments:** `serve`
+
+Or add to your OpenClaw config file:
+
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "~/.whasapo/whasapo",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+### Any MCP-compatible client
+
+Whasapo is a standard MCP server using stdio transport. Point any MCP client at:
+
+```
+command: ~/.whasapo/whasapo
+args: serve
+```
 
 ## What can you do with it?
 
-Ask Claude things like:
+Ask your AI assistant things like:
 
 - "Show me my recent WhatsApp messages"
 - "Send a WhatsApp message to John saying I'll be 10 minutes late"
 - "What messages did I get in the family group?"
 - "Find my contact named Sarah"
+- "Reply to Mom's last message saying thanks"
+- "Summarize what I missed in the work group chat"
+
+## Available tools
+
+| Tool | Description |
+|------|-------------|
+| `send_message` | Send a text message to a contact or group |
+| `list_chats` | List recent chats with last message preview |
+| `get_messages` | Get messages, optionally filtered by chat |
+| `search_contacts` | Search contacts by name or phone number |
 
 ## Commands
 
 ```
 whasapo pair        Link your WhatsApp account (QR code)
-whasapo serve       Start the MCP server (Claude does this automatically)
+whasapo serve       Start the MCP server (your AI app does this automatically)
 whasapo status      Check if everything is working
+whasapo update      Update to the latest version
 whasapo uninstall   Remove whasapo completely
 whasapo version     Print version
 ```
@@ -37,7 +119,7 @@ whasapo version     Print version
 ## Troubleshooting
 
 **"Claude doesn't show WhatsApp tools"**
-Restart the Claude desktop app after installing.
+Restart the app after installing.
 
 **"Can't be opened because Apple cannot check it for malicious software"**
 Run this, then try again:
@@ -48,16 +130,16 @@ xattr -d com.apple.quarantine ~/.whasapo/whasapo
 **"Connection failed" or "not paired"**
 Your WhatsApp link may have expired. Re-pair:
 ```bash
-~/.whasapo/whasapo pair
+whasapo pair
 ```
 
 **"No messages found"**
-Messages are only collected while Claude is running. You won't see old message history — only new messages that arrive after you open Claude.
+Messages from before the first install won't appear. Once installed, messages are stored persistently and survive restarts.
 
 ## Uninstall
 
 ```bash
-~/.whasapo/whasapo uninstall
+whasapo uninstall
 ```
 
 Or remotely:
@@ -76,6 +158,6 @@ make release        # universal macOS binary → dist/whasapo-VERSION-macos.zip
 
 ## How it works
 
-Whasapo runs as an [MCP server](https://modelcontextprotocol.io/) that Claude launches automatically. It connects to WhatsApp using the [whatsmeow](https://github.com/tulir/whatsmeow) library (the same protocol the official WhatsApp apps use).
+Whasapo is an [MCP server](https://modelcontextprotocol.io/) that connects to WhatsApp using the [whatsmeow](https://github.com/tulir/whatsmeow) library — the same protocol the official WhatsApp apps use.
 
-Your WhatsApp session is stored locally in `~/.whasapo/session.db`. No data is sent to any third-party server.
+Your WhatsApp session is stored locally in `~/.whasapo/session.db`. Messages are persisted in SQLite so they survive restarts. No data is sent to any third-party server.
