@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Whasapo installer
+# Whasapo installer — macOS and Linux
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/toloco/whasapo/main/install.sh | bash
 #   ./install.sh                  (local install)
@@ -10,7 +10,31 @@ set -euo pipefail
 REPO="toloco/whasapo"
 INSTALL_DIR="$HOME/.whasapo"
 BINARY="$INSTALL_DIR/whasapo"
-CONFIG_FILE="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+
+# Detect OS and architecture
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+
+case "$OS" in
+    Darwin) PLATFORM="macos" ;;
+    Linux)  PLATFORM="linux" ;;
+    *)      echo "Error: Unsupported OS: $OS. Use install.ps1 for Windows." >&2; exit 1 ;;
+esac
+
+case "$ARCH" in
+    x86_64|amd64) ARCH="amd64" ;;
+    arm64|aarch64) ARCH="arm64" ;;
+    *)             echo "Error: Unsupported architecture: $ARCH" >&2; exit 1 ;;
+esac
+
+# Claude Desktop config path
+case "$OS" in
+    Darwin) CONFIG_FILE="$HOME/Library/Application Support/Claude/claude_desktop_config.json" ;;
+    Linux)
+        CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
+        CONFIG_FILE="$CONFIG_DIR/Claude/claude_desktop_config.json"
+        ;;
+esac
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -38,9 +62,8 @@ if [ "${1:-}" = "--uninstall" ]; then
     done
 
     if [ -d "$INSTALL_DIR" ]; then
-        # Keep session.db backup just in case
         if [ -f "$INSTALL_DIR/session.db" ]; then
-            warn "Backing up session to $INSTALL_DIR.session.db.bak"
+            warn "Backing up session to $HOME/.whasapo.session.db.bak"
             cp "$INSTALL_DIR/session.db" "$HOME/.whasapo.session.db.bak"
         fi
         rm -rf "$INSTALL_DIR"
@@ -73,14 +96,9 @@ fi
 # --- Install ---
 
 info "=== Whasapo Installer ==="
-info "WhatsApp integration for Claude desktop"
+info "WhatsApp integration for Claude"
+echo "  Platform: $PLATFORM ($ARCH)"
 echo ""
-
-# Check macOS
-if [ "$(uname -s)" != "Darwin" ]; then
-    error "Whasapo currently only supports macOS."
-    exit 1
-fi
 
 # Create install directory
 mkdir -p "$INSTALL_DIR"
@@ -97,7 +115,6 @@ trap cleanup EXIT
 # --- Download or copy binary ---
 
 # When piped from curl, always download from GitHub.
-# Only use local binaries when run as a script file (e.g. from a zip).
 IS_PIPED=0
 if [ ! -t 0 ] && [ -z "${BASH_SOURCE[0]:-}" ]; then
     IS_PIPED=1
@@ -121,15 +138,21 @@ if [ -n "$LOCAL_BIN" ]; then
 else
     info "Downloading latest release..."
 
-    # Get latest release URL
+    # Determine asset pattern based on platform
+    if [ "$PLATFORM" = "macos" ]; then
+        ASSET_PATTERN="macos"
+    else
+        ASSET_PATTERN="linux-${ARCH}"
+    fi
+
     DOWNLOAD_URL=$(curl -sSL "https://api.github.com/repos/$REPO/releases/latest" \
         | grep '"browser_download_url"' \
-        | grep 'macos' \
+        | grep "$ASSET_PATTERN" \
         | head -1 \
         | cut -d '"' -f 4) || true
 
     if [ -z "$DOWNLOAD_URL" ]; then
-        error "Could not find a release to download."
+        error "Could not find a $PLATFORM-$ARCH release."
         error "Check https://github.com/$REPO/releases"
         exit 1
     fi
@@ -137,15 +160,19 @@ else
     TEMP_DIR=$(mktemp -d)
 
     echo "  Downloading from: $DOWNLOAD_URL"
-    curl -sSL "$DOWNLOAD_URL" -o "$TEMP_DIR/whasapo.zip"
+    curl -sSL "$DOWNLOAD_URL" -o "$TEMP_DIR/whasapo-archive"
 
     echo "  Extracting..."
-    unzip -qo "$TEMP_DIR/whasapo.zip" -d "$TEMP_DIR"
+    if echo "$DOWNLOAD_URL" | grep -q '\.zip$'; then
+        unzip -qo "$TEMP_DIR/whasapo-archive" -d "$TEMP_DIR"
+    else
+        tar xzf "$TEMP_DIR/whasapo-archive" -C "$TEMP_DIR"
+    fi
 
     if [ -f "$TEMP_DIR/whasapo" ]; then
         cat "$TEMP_DIR/whasapo" > "$BINARY"
     else
-        error "Downloaded archive doesn't contain whasapo binary."
+        error "Archive doesn't contain whasapo binary."
         rm -rf "$TEMP_DIR"
         exit 1
     fi
@@ -155,9 +182,11 @@ fi
 
 chmod +x "$BINARY"
 
-# Remove macOS quarantine/provenance (prevents "app can't be opened" or killed)
-xattr -d com.apple.quarantine "$BINARY" 2>/dev/null || true
-xattr -d com.apple.provenance "$BINARY" 2>/dev/null || true
+# Remove macOS quarantine/provenance
+if [ "$OS" = "Darwin" ]; then
+    xattr -d com.apple.quarantine "$BINARY" 2>/dev/null || true
+    xattr -d com.apple.provenance "$BINARY" 2>/dev/null || true
+fi
 
 ok "Binary installed to $BINARY"
 
@@ -181,11 +210,10 @@ echo ""
 
 info "Configuring Claude desktop app..."
 
-CONFIG_DIR="$(dirname "$CONFIG_FILE")"
-mkdir -p "$CONFIG_DIR"
+CONFIG_DIR_PATH="$(dirname "$CONFIG_FILE")"
+mkdir -p "$CONFIG_DIR_PATH"
 
 if [ -f "$CONFIG_FILE" ]; then
-    # Backup existing config
     cp "$CONFIG_FILE" "$CONFIG_FILE.backup"
     echo "  Backed up config to claude_desktop_config.json.backup"
 fi
@@ -196,7 +224,6 @@ import json, os, sys
 config_file = '$CONFIG_FILE'
 binary = '$BINARY'
 
-# Read existing or create new
 if os.path.exists(config_file):
     with open(config_file, 'r') as f:
         try:
@@ -206,7 +233,6 @@ if os.path.exists(config_file):
 else:
     config = {}
 
-# Add/update mcpServers
 if 'mcpServers' not in config:
     config['mcpServers'] = {}
 
@@ -267,6 +293,6 @@ echo "    whasapo pair        Re-link WhatsApp"
 echo "    whasapo --help      All commands"
 echo ""
 echo "  Uninstall:"
-echo "    $INSTALL_DIR/whasapo uninstall"
+echo "    whasapo uninstall"
 echo "    # or: curl -sSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash -s -- --uninstall"
 echo ""

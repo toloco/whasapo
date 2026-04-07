@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -295,9 +296,8 @@ func cmdStatus() {
 // --- uninstall command ---
 
 func cmdUninstall() {
-	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".whasapo")
-	configFile := filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	dataDir := dataDir()
+	configFile := claudeConfigPath()
 
 	fmt.Println("=== Uninstall Whasapo ===")
 	fmt.Println()
@@ -541,8 +541,10 @@ func cmdUpdate() {
 		fatal("Failed to replace binary: %v", err)
 	}
 
-	// Remove quarantine
-	exec.Command("xattr", "-d", "com.apple.quarantine", exePath).Run()
+	// Remove macOS quarantine
+	if runtime.GOOS == "darwin" {
+		exec.Command("xattr", "-d", "com.apple.quarantine", exePath).Run()
+	}
 
 	fmt.Printf("Updated to %s!\n", latest)
 }
@@ -553,10 +555,43 @@ func getDBPath() string {
 	if v := os.Getenv("WHASAPO_DB"); v != "" {
 		return v
 	}
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".whasapo")
+	dir := dataDir()
 	os.MkdirAll(dir, 0700)
 	return filepath.Join(dir, "session.db")
+}
+
+// dataDir returns the platform-specific data directory.
+func dataDir() string {
+	switch runtime.GOOS {
+	case "windows":
+		if d := os.Getenv("LOCALAPPDATA"); d != "" {
+			return filepath.Join(d, "whasapo")
+		}
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, "AppData", "Local", "whasapo")
+	default: // macOS, Linux
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, ".whasapo")
+	}
+}
+
+// claudeConfigPath returns the platform-specific Claude desktop config path.
+func claudeConfigPath() string {
+	home, _ := os.UserHomeDir()
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	case "windows":
+		if d := os.Getenv("APPDATA"); d != "" {
+			return filepath.Join(d, "Claude", "claude_desktop_config.json")
+		}
+		return filepath.Join(home, "AppData", "Roaming", "Claude", "claude_desktop_config.json")
+	default: // Linux
+		if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
+			return filepath.Join(d, "Claude", "claude_desktop_config.json")
+		}
+		return filepath.Join(home, ".config", "Claude", "claude_desktop_config.json")
+	}
 }
 
 func fatal(format string, args ...interface{}) {

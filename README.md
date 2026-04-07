@@ -4,12 +4,20 @@ WhatsApp MCP server. Send and read WhatsApp messages from any AI assistant that 
 
 ## Install
 
+**macOS / Linux:**
+
 ```bash
 curl -sSL https://raw.githubusercontent.com/toloco/whasapo/main/install.sh | bash
 ```
 
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/toloco/whasapo/main/install.ps1 | iex
+```
+
 This will:
-1. Download the latest binary
+1. Download the latest binary for your platform
 2. Configure the Claude desktop app
 3. Walk you through linking your WhatsApp account (QR code scan)
 
@@ -153,7 +161,8 @@ Requires Go 1.23+.
 
 ```bash
 make build          # build for your machine → bin/whasapo
-make release        # universal macOS binary → dist/whasapo-VERSION-macos.zip
+make release        # macOS universal binary → dist/whasapo-VERSION-macos.zip
+make release-all    # all platforms → dist/whasapo-VERSION-{macos,linux,windows}.*
 ```
 
 ## How it works
