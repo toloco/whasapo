@@ -96,20 +96,28 @@ trap cleanup EXIT
 
 # --- Download or copy binary ---
 
+# When piped from curl, always download from GitHub.
+# Only use local binaries when run as a script file (e.g. from a zip).
+IS_PIPED=0
+if [ ! -t 0 ] && [ -z "${BASH_SOURCE[0]:-}" ]; then
+    IS_PIPED=1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 
-# Check if binary exists locally (e.g. from a zip download)
 LOCAL_BIN=""
-for dir in "$SCRIPT_DIR" "$SCRIPT_DIR/bin" "$SCRIPT_DIR/dist"; do
-    if [ -f "$dir/whasapo" ] 2>/dev/null; then
-        LOCAL_BIN="$dir/whasapo"
-        break
-    fi
-done
+if [ "$IS_PIPED" = "0" ]; then
+    for dir in "$SCRIPT_DIR" "$SCRIPT_DIR/bin" "$SCRIPT_DIR/dist"; do
+        if [ -f "$dir/whasapo" ] 2>/dev/null; then
+            LOCAL_BIN="$dir/whasapo"
+            break
+        fi
+    done
+fi
 
 if [ -n "$LOCAL_BIN" ]; then
     info "Installing from local binary..."
-    cp "$LOCAL_BIN" "$BINARY"
+    cat "$LOCAL_BIN" > "$BINARY"
 else
     info "Downloading latest release..."
 
@@ -135,7 +143,7 @@ else
     unzip -qo "$TEMP_DIR/whasapo.zip" -d "$TEMP_DIR"
 
     if [ -f "$TEMP_DIR/whasapo" ]; then
-        cp "$TEMP_DIR/whasapo" "$BINARY"
+        cat "$TEMP_DIR/whasapo" > "$BINARY"
     else
         error "Downloaded archive doesn't contain whasapo binary."
         rm -rf "$TEMP_DIR"
@@ -147,8 +155,9 @@ fi
 
 chmod +x "$BINARY"
 
-# Remove macOS quarantine (prevents "app can't be opened" error)
+# Remove macOS quarantine/provenance (prevents "app can't be opened" or killed)
 xattr -d com.apple.quarantine "$BINARY" 2>/dev/null || true
+xattr -d com.apple.provenance "$BINARY" 2>/dev/null || true
 
 ok "Binary installed to $BINARY"
 
