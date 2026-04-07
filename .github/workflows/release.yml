@@ -18,19 +18,35 @@ jobs:
         with:
           go-version: '1.23'
 
-      - name: Build universal macOS binary
+      - name: Build all platforms
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           LDFLAGS="-s -w -X main.version=$VERSION"
 
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o whasapo-arm64 ./cmd/whasapo
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o whasapo-amd64 ./cmd/whasapo
-
-          lipo -create -output whasapo whasapo-arm64 whasapo-amd64
-          rm whasapo-arm64 whasapo-amd64
-
+          # macOS universal binary
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o whasapo-darwin-arm64 ./cmd/whasapo
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o whasapo-darwin-amd64 ./cmd/whasapo
+          lipo -create -output whasapo whasapo-darwin-arm64 whasapo-darwin-amd64
           zip whasapo-${VERSION}-macos.zip whasapo
-          shasum -a 256 whasapo-${VERSION}-macos.zip > whasapo-${VERSION}-macos.zip.sha256
+          rm whasapo whasapo-darwin-arm64 whasapo-darwin-amd64
+
+          # Linux amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o whasapo ./cmd/whasapo
+          tar czf whasapo-${VERSION}-linux-amd64.tar.gz whasapo
+          rm whasapo
+
+          # Linux arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o whasapo ./cmd/whasapo
+          tar czf whasapo-${VERSION}-linux-arm64.tar.gz whasapo
+          rm whasapo
+
+          # Windows amd64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o whasapo.exe ./cmd/whasapo
+          zip whasapo-${VERSION}-windows-amd64.zip whasapo.exe
+          rm whasapo.exe
+
+          # Checksums
+          shasum -a 256 whasapo-${VERSION}-*.{zip,tar.gz} > whasapo-${VERSION}-checksums.txt
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -38,4 +54,6 @@ jobs:
           generate_release_notes: true
           files: |
             whasapo-*-macos.zip
-            whasapo-*-macos.zip.sha256
+            whasapo-*-linux-*.tar.gz
+            whasapo-*-windows-*.zip
+            whasapo-*-checksums.txt
