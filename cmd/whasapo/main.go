@@ -402,7 +402,7 @@ func checkForUpdate() (latest string, newer bool) {
 		return "", false
 	}
 	latest = strings.TrimPrefix(rel.TagName, "v")
-	return latest, latest != version && latest > version
+	return latest, semverGreater(latest, version)
 }
 
 func cmdUpdate() {
@@ -431,7 +431,7 @@ func cmdUpdate() {
 	}
 
 	latest := strings.TrimPrefix(rel.TagName, "v")
-	if latest == version || latest <= version {
+	if !semverGreater(latest, version) {
 		fmt.Printf("Already up to date (%s).\n", version)
 		return
 	}
@@ -527,4 +527,26 @@ func getDBPath() string {
 func fatal(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
+}
+
+// semverGreater returns true if a > b using numeric comparison per segment.
+func semverGreater(a, b string) bool {
+	as := strings.Split(a, ".")
+	bs := strings.Split(b, ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		var ai, bi int
+		if i < len(as) {
+			fmt.Sscanf(as[i], "%d", &ai)
+		}
+		if i < len(bs) {
+			fmt.Sscanf(bs[i], "%d", &bi)
+		}
+		if ai > bi {
+			return true
+		}
+		if ai < bi {
+			return false
+		}
+	}
+	return false
 }
