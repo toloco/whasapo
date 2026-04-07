@@ -374,6 +374,9 @@ func handleListChats(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 }
 
 func handleGetMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if err := checkConnection(); err != nil {
+		return err, nil
+	}
 	chat := req.GetString("chat", "")
 	limit := int(req.GetFloat("limit", 50))
 	if limit <= 0 {

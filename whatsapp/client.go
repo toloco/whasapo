@@ -214,8 +214,9 @@ func (c *Client) storeMessage(msg StoredMessage) {
 		isGroup = 1
 	}
 	_, err := c.db.Exec(
-		`INSERT OR IGNORE INTO messages (id, chat, sender, push_name, text, timestamp, is_from_me, is_group)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO messages (id, chat, sender, push_name, text, timestamp, is_from_me, is_group)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id, chat) DO UPDATE SET text = excluded.text, push_name = excluded.push_name`,
 		msg.ID, msg.Chat, msg.Sender, msg.PushName, msg.Text,
 		msg.Timestamp.Unix(), isFromMe, isGroup,
 	)
@@ -257,13 +258,23 @@ func extractText(msg *waE2E.Message) string {
 		return fmt.Sprintf("[location] %.4f, %.4f", loc.GetDegreesLatitude(), loc.GetDegreesLongitude())
 	}
 	if con := msg.GetContactMessage(); con != nil {
-		return "[contact] " + con.GetDisplayName()
+		if name := con.GetDisplayName(); name != "" {
+			return "[contact] " + name
+		}
+		return "[contact]"
 	}
 	if poll := msg.GetPollCreationMessage(); poll != nil {
-		return "[poll] " + poll.GetName()
+		if name := poll.GetName(); name != "" {
+			return "[poll] " + name
+		}
+		return "[poll]"
 	}
 	if li := msg.GetListMessage(); li != nil {
-		return li.GetTitle() + ": " + li.GetDescription()
+		title := li.GetTitle()
+		if title != "" {
+			return "[list] " + title
+		}
+		return "[list]"
 	}
 	return "[unsupported]"
 }
@@ -315,6 +326,9 @@ func (c *Client) GetMessages(chatFilter string, limit int) []StoredMessage {
 		m.IsGroup = group == 1
 		msgs = append(msgs, m)
 	}
+	if err := rows.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "whasapo: error reading messages: %v\n", err)
+	}
 	// Reverse to chronological order (query returns newest first)
 	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
 		msgs[i], msgs[j] = msgs[j], msgs[i]
@@ -346,6 +360,9 @@ func (c *Client) GetChats(ctx context.Context) ([]ChatInfo, error) {
 		var isGroup int
 		if err := rows.Scan(&chat, &pushName, &text, &ts, &isGroup); err != nil {
 			continue
+		}
+		if err := rows.Err(); err != nil {
+			break
 		}
 		seen[chat] = true
 		name := c.resolveNameCached(ctx, chat)
@@ -390,7 +407,7 @@ func (c *Client) SearchContacts(ctx context.Context, query string) ([]ChatInfo, 
 	lowerQuery := strings.ToLower(query)
 	for jid, info := range contacts {
 		name := contactName(info)
-		if strings.Contains(strings.ToLower(name), lowerQuery) || strings.Contains(jid.User, lowerQuery) {
+		if strings.Contains(strings.ToLower(name), lowerQuery) || strings.Contains(strings.ToLower(jid.User), lowerQuery) {
 			results = append(results, ChatInfo{
 				JID:     jid.String(),
 				Name:    name,
