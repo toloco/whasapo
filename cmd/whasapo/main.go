@@ -217,13 +217,16 @@ func cmdServe() {
 	), handleSendMessage)
 
 	s.AddTool(mcp.NewTool("list_chats",
-		mcp.WithDescription("List recent WhatsApp chats with last message preview. Returns chats from received messages and joined groups."),
+		mcp.WithDescription("List WhatsApp chats with last message preview. Includes all chats with stored messages and joined groups."),
 	), handleListChats)
 
 	s.AddTool(mcp.NewTool("get_messages",
-		mcp.WithDescription("Get recent messages, optionally filtered by chat. Only includes messages received while the server is running."),
+		mcp.WithDescription("Get stored WhatsApp messages. Messages are persisted across restarts. Can filter by chat JID or search by contact name or message text."),
 		mcp.WithString("chat",
 			mcp.Description("Chat JID to filter by (omit for all chats)"),
+		),
+		mcp.WithString("query",
+			mcp.Description("Search messages by contact name or text content (case-insensitive)"),
 		),
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum number of messages to return (default 50)"),
@@ -378,13 +381,14 @@ func handleGetMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
 		return err, nil
 	}
 	chat := req.GetString("chat", "")
+	query := req.GetString("query", "")
 	limit := int(req.GetFloat("limit", 50))
 	if limit <= 0 {
 		limit = 50
 	}
-	msgs := wa.GetMessages(chat, limit)
+	msgs := wa.GetMessages(chat, query, limit)
 	if len(msgs) == 0 {
-		return mcp.NewToolResultText("No messages yet. Messages are collected while the server is running."), nil
+		return mcp.NewToolResultText("No messages stored yet. Messages are saved automatically as they arrive."), nil
 	}
 	data, _ := json.MarshalIndent(msgs, "", "  ")
 	return mcp.NewToolResultText(string(data)), nil

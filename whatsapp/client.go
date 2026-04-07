@@ -291,15 +291,29 @@ func (c *Client) SendMessage(ctx context.Context, jidStr, text string) error {
 	return err
 }
 
-// GetMessages returns messages from SQLite, optionally filtered by chat.
-func (c *Client) GetMessages(chatFilter string, limit int) []StoredMessage {
+// GetMessages returns messages from SQLite, optionally filtered by chat JID or search query.
+func (c *Client) GetMessages(chatFilter, query string, limit int) []StoredMessage {
 	var rows *sql.Rows
 	var err error
-	if chatFilter != "" {
+	if chatFilter != "" && query != "" {
+		rows, err = c.db.Query(
+			`SELECT id, chat, sender, push_name, text, timestamp, is_from_me, is_group
+			 FROM messages WHERE chat = ? AND (push_name LIKE ? OR text LIKE ?)
+			 ORDER BY timestamp DESC LIMIT ?`,
+			chatFilter, "%"+query+"%", "%"+query+"%", limit,
+		)
+	} else if chatFilter != "" {
 		rows, err = c.db.Query(
 			`SELECT id, chat, sender, push_name, text, timestamp, is_from_me, is_group
 			 FROM messages WHERE chat = ? ORDER BY timestamp DESC LIMIT ?`,
 			chatFilter, limit,
+		)
+	} else if query != "" {
+		rows, err = c.db.Query(
+			`SELECT id, chat, sender, push_name, text, timestamp, is_from_me, is_group
+			 FROM messages WHERE push_name LIKE ? OR text LIKE ?
+			 ORDER BY timestamp DESC LIMIT ?`,
+			"%"+query+"%", "%"+query+"%", limit,
 		)
 	} else {
 		rows, err = c.db.Query(
