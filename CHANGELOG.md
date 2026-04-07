@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.0
+
+- **Cross-platform** — now supports macOS, Linux (amd64/arm64), and Windows (amd64).
+- **Linux installer** — `install.sh` detects OS and architecture automatically.
+- **Windows installer** — new `install.ps1` PowerShell script.
+- **Platform-specific paths** — data and Claude config paths follow OS conventions (macOS `~/Library`, Linux `~/.config`, Windows `%APPDATA%`).
+- **CI builds all platforms** — releases include macOS universal, Linux amd64/arm64, and Windows amd64 binaries.
+
 ## v0.5.0
 
 - **Persistent messages** — messages are stored in SQLite and survive server restarts. You can now see message history across sessions.
