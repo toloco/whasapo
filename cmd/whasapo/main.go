@@ -84,14 +84,14 @@ Environment:
 
 func cmdPair() {
 	dbPath := getDBPath()
-	fmt.Println("=== WhatsApp Pairing ===")
+	fmt.Println("\n\033[1m📱 WhatsApp Pairing\033[0m")
 	fmt.Println()
 
 	store.SetOSInfo("Whasapo", [3]uint32{0, 1, 0})
 
 	container, err := sqlstore.New(context.Background(), "sqlite",
 		fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", dbPath),
-		waLog.Stdout("DB", "WARN", true),
+		waLog.Noop,
 	)
 	if err != nil {
 		fatal("Failed to open database: %v", err)
@@ -102,14 +102,14 @@ func cmdPair() {
 		fatal("Failed to get device: %v", err)
 	}
 
-	client := whatsmeow.NewClient(deviceStore, waLog.Stdout("Client", "WARN", true))
+	client := whatsmeow.NewClient(deviceStore, waLog.Noop)
 
 	if client.Store.ID != nil {
-		fmt.Println("Already paired!")
-		fmt.Println("WhatsApp ID:", client.Store.ID.String())
+		fmt.Println("\033[32m✅ Already paired!\033[0m")
+		fmt.Printf("   WhatsApp ID: %s\n", client.Store.ID.User)
 		fmt.Println()
-		fmt.Println("To re-pair, run: whasapo uninstall")
-		fmt.Println("Then run: whasapo pair")
+		fmt.Println("   To re-pair, run: whasapo uninstall")
+		fmt.Println("   Then run: whasapo pair")
 		return
 	}
 
@@ -122,26 +122,26 @@ func cmdPair() {
 		fatal("Failed to connect: %v", err)
 	}
 
-	fmt.Println("Open WhatsApp on your phone:")
-	fmt.Println("  1. Go to Settings > Linked Devices")
-	fmt.Println("  2. Tap 'Link a Device'")
-	fmt.Println("  3. Scan the QR code below")
+	fmt.Println("📲 Open WhatsApp on your phone:")
+	fmt.Println("   1. Go to \033[1mSettings > Linked Devices\033[0m")
+	fmt.Println("   2. Tap \033[1m'Link a Device'\033[0m")
+	fmt.Println("   3. Scan the QR code below")
 	fmt.Println()
 
 	for evt := range qrChan {
 		if evt.Event == "code" {
 			qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
 			fmt.Println()
-			fmt.Println("Waiting for scan...")
+			fmt.Println("⏳ Waiting for scan...")
 		} else {
 			if evt.Event == "success" {
 				fmt.Println()
-				fmt.Println("Paired successfully!")
+				fmt.Println("\033[32m✅ Paired successfully!\033[0m")
 				if client.Store.ID != nil {
-					fmt.Printf("Account: %s\n", client.Store.ID.User)
+					fmt.Printf("   Account: %s\n", client.Store.ID.User)
 				}
 			} else {
-				fmt.Fprintf(os.Stderr, "Pairing failed: %s\n", evt.Event)
+				fmt.Fprintf(os.Stderr, "\033[31m❌ Pairing failed: %s\033[0m\n", evt.Event)
 				client.Disconnect()
 				os.Exit(1)
 			}
@@ -150,16 +150,16 @@ func cmdPair() {
 	}
 
 	// Sync contacts automatically
-	fmt.Print("Syncing contacts")
+	fmt.Print("\n🔄 Syncing contacts")
 	for i := 0; i < 10; i++ {
 		time.Sleep(time.Second)
 		fmt.Print(".")
 	}
-	fmt.Println(" done!")
+	fmt.Println(" \033[32mdone!\033[0m")
 
 	client.Disconnect()
 	fmt.Println()
-	fmt.Println("Restart the Claude desktop app to start using WhatsApp.")
+	fmt.Println("🎉 Restart the Claude desktop app to start using WhatsApp!")
 }
 
 // --- serve command ---

@@ -95,9 +95,10 @@ fi
 
 # --- Install ---
 
-info "=== Whasapo Installer ==="
-info "WhatsApp integration for Claude"
-echo "  Platform: $PLATFORM ($ARCH)"
+echo ""
+info "📱 Whasapo Installer"
+info "   WhatsApp integration for Claude"
+echo "   Platform: $PLATFORM ($ARCH)"
 echo ""
 
 # Create install directory
@@ -133,10 +134,10 @@ if [ "$IS_PIPED" = "0" ]; then
 fi
 
 if [ -n "$LOCAL_BIN" ]; then
-    info "Installing from local binary..."
+    info "📦 Installing from local binary..."
     cat "$LOCAL_BIN" > "$BINARY"
 else
-    info "Downloading latest release..."
+    info "⬇️  Downloading latest release..."
 
     # Determine asset pattern based on platform
     if [ "$PLATFORM" = "macos" ]; then
@@ -188,7 +189,7 @@ if [ "$OS" = "Darwin" ]; then
     xattr -d com.apple.provenance "$BINARY" 2>/dev/null || true
 fi
 
-ok "Binary installed to $BINARY"
+ok "✅ Binary installed to $BINARY"
 
 # Add to PATH via symlink
 LINK_DIR="/usr/local/bin"
@@ -208,7 +209,7 @@ echo ""
 
 # --- Configure Claude desktop ---
 
-info "Configuring Claude desktop app..."
+info "⚙️  Configuring Claude desktop app..."
 
 CONFIG_DIR_PATH="$(dirname "$CONFIG_FILE")"
 mkdir -p "$CONFIG_DIR_PATH"
@@ -253,18 +254,18 @@ print('  Added whatsapp MCP server to Claude config.')
     echo ""
 }
 
-ok "Claude desktop configured"
+ok "✅ Claude desktop configured"
 echo ""
 
 # --- Pair with WhatsApp ---
 
 if [ -f "$INSTALL_DIR/session.db" ]; then
-    info "WhatsApp session found (already paired)."
+    ok "✅ WhatsApp session found (already paired)."
     echo ""
     echo "  To re-pair: whasapo pair"
     echo "  To check:   whasapo status"
 else
-    info "Linking your WhatsApp account..."
+    info "📲 Linking your WhatsApp account..."
     echo ""
     echo "  Open WhatsApp on your phone > Settings > Linked Devices > Link a Device"
     echo "  Then scan the QR code below:"
@@ -274,21 +275,19 @@ fi
 
 INSTALL_COMPLETE=1
 echo ""
-echo "========================================="
-ok "  Whasapo installed successfully!"
-echo "========================================="
+echo ""
+ok "🎉 ========================================="
+ok "   Whasapo installed successfully!"
+ok "   ========================================="
 echo ""
 echo "  Restart the Claude desktop app, then try asking:"
 echo ""
-echo "    \"Show me my recent WhatsApp messages\""
-echo "    \"Send a WhatsApp message to Mom saying hi\""
+echo "    💬 \"Show me my recent WhatsApp messages\""
+echo "    📤 \"Send a WhatsApp message to Mom saying hi\""
 echo ""
 echo "  Commands:"
 echo "    whasapo status      Check connection"
 echo "    whasapo pair        Re-link WhatsApp"
+echo "    whasapo update      Update to latest version"
 echo "    whasapo --help      All commands"
-echo ""
-echo "  Uninstall:"
-echo "    whasapo uninstall"
-echo "    # or: curl -sSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash -s -- --uninstall"
 echo ""
