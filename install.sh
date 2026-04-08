@@ -264,14 +264,10 @@ if [ -f "$INSTALL_DIR/session.db" ]; then
     echo "  To re-pair: whasapo pair"
     echo "  To check:   whasapo status"
 else
-    info "Let's link your WhatsApp account!"
+    info "Linking your WhatsApp account..."
     echo ""
-    echo "  1. Open WhatsApp on your phone"
-    echo "  2. Go to Settings > Linked Devices"
-    echo "  3. Tap 'Link a Device'"
-    echo "  4. Scan the QR code that appears below"
-    echo ""
-    read -p "Press Enter when ready... " < /dev/tty
+    echo "  Open WhatsApp on your phone > Settings > Linked Devices > Link a Device"
+    echo "  Then scan the QR code below:"
     echo ""
     "$BINARY" pair
 fi

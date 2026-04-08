@@ -164,14 +164,10 @@ if (Test-Path "$InstallDir\session.db") {
     Write-Host "  To re-pair: whasapo pair"
     Write-Host "  To check:   whasapo status"
 } else {
-    Write-Host "Let's link your WhatsApp account!" -ForegroundColor Cyan
+    Write-Host "Linking your WhatsApp account..." -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  1. Open WhatsApp on your phone"
-    Write-Host "  2. Go to Settings > Linked Devices"
-    Write-Host "  3. Tap 'Link a Device'"
-    Write-Host "  4. Scan the QR code that appears below"
-    Write-Host ""
-    Read-Host "Press Enter when ready"
+    Write-Host "  Open WhatsApp on your phone > Settings > Linked Devices > Link a Device"
+    Write-Host "  Then scan the QR code below:"
     Write-Host ""
     & $Binary pair
 }
