@@ -183,10 +183,10 @@ fi
 
 chmod +x "$BINARY"
 
-# Remove macOS quarantine/provenance
+# macOS: sign binary and remove quarantine to prevent "killed" errors
 if [ "$OS" = "Darwin" ]; then
+    codesign -s - -f "$BINARY" 2>/dev/null || true
     xattr -d com.apple.quarantine "$BINARY" 2>/dev/null || true
-    xattr -d com.apple.provenance "$BINARY" 2>/dev/null || true
 fi
 
 ok "✅ Binary installed to $BINARY"

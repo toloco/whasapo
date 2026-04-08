@@ -545,8 +545,9 @@ func cmdUpdate() {
 		fatal("Failed to replace binary: %v", err)
 	}
 
-	// Remove macOS quarantine
+	// macOS: ad-hoc sign and remove quarantine to prevent "killed" errors
 	if runtime.GOOS == "darwin" {
+		exec.Command("codesign", "-s", "-", "-f", exePath).Run()
 		exec.Command("xattr", "-d", "com.apple.quarantine", exePath).Run()
 	}
 
