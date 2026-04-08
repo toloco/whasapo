@@ -23,6 +23,7 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 
 	_ "modernc.org/sqlite"
@@ -105,12 +106,45 @@ func cmdPair() {
 	client := whatsmeow.NewClient(deviceStore, waLog.Noop)
 
 	if client.Store.ID != nil {
-		fmt.Println("\033[32m✅ Already paired!\033[0m")
-		fmt.Printf("   WhatsApp ID: %s\n", client.Store.ID.User)
+		fmt.Println("🔍 Existing session found, testing connection...")
+		// Test if the existing session actually works
+		connected := make(chan bool, 1)
+		client.AddEventHandler(func(evt interface{}) {
+			switch evt.(type) {
+			case *events.Connected:
+				connected <- true
+			case *events.LoggedOut:
+				connected <- false
+			}
+		})
+		if err := client.Connect(); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			select {
+			case ok := <-connected:
+				cancel()
+				if ok {
+					fmt.Println("\033[32m✅ Already paired and connected!\033[0m")
+					fmt.Printf("   WhatsApp ID: %s\n", client.Store.ID.User)
+					client.Disconnect()
+					return
+				}
+				fmt.Println("\033[33m⚠️  Session expired. Re-pairing...\033[0m")
+			case <-ctx.Done():
+				cancel()
+				fmt.Println("\033[33m⚠️  Connection timed out. Re-pairing...\033[0m")
+			}
+			client.Disconnect()
+		} else {
+			fmt.Println("\033[33m⚠️  Connection failed. Re-pairing...\033[0m")
+		}
+		// Delete old session and get a fresh device store
+		container.DeleteDevice(context.Background(), client.Store)
 		fmt.Println()
-		fmt.Println("   To re-pair, run: whasapo uninstall")
-		fmt.Println("   Then run: whasapo pair")
-		return
+		deviceStore, err = container.GetFirstDevice(context.Background())
+		if err != nil {
+			fatal("Failed to get device: %v", err)
+		}
+		client = whatsmeow.NewClient(deviceStore, waLog.Noop)
 	}
 
 	qrChan, err := client.GetQRChannel(context.Background())
