@@ -259,19 +259,8 @@ echo ""
 
 # --- Pair with WhatsApp ---
 
-if [ -f "$INSTALL_DIR/session.db" ]; then
-    ok "✅ WhatsApp session found (already paired)."
-    echo ""
-    echo "  To re-pair: whasapo pair"
-    echo "  To check:   whasapo status"
-else
-    info "📲 Linking your WhatsApp account..."
-    echo ""
-    echo "  Open WhatsApp on your phone > Settings > Linked Devices > Link a Device"
-    echo "  Then scan the QR code below:"
-    echo ""
-    "$BINARY" pair
-fi
+# Pair always runs — it tests the connection and re-pairs if needed
+"$BINARY" pair
 
 INSTALL_COMPLETE=1
 echo ""
