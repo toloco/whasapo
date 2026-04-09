@@ -283,6 +283,18 @@ func cmdServe() {
 		),
 	), handleGetChat)
 
+	s.AddTool(mcp.NewTool("download_media",
+		mcp.WithDescription("Download media (image, video, document, audio, sticker) from a WhatsApp message. Returns the local file path. Use the message ID and chat JID from get_messages results."),
+		mcp.WithString("message_id",
+			mcp.Required(),
+			mcp.Description("Message ID (from get_messages results)"),
+		),
+		mcp.WithString("chat",
+			mcp.Required(),
+			mcp.Description("Chat JID the message belongs to"),
+		),
+	), handleDownloadMedia)
+
 	s.AddTool(mcp.NewTool("send_file",
 		mcp.WithDescription("Send a file (image, video, document, audio) to a WhatsApp contact or group"),
 		mcp.WithString("to",
@@ -468,6 +480,22 @@ func handleSearchContacts(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 	}
 	data, _ := json.MarshalIndent(contacts, "", "  ")
 	return mcp.NewToolResultText(string(data)), nil
+}
+
+func handleDownloadMedia(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if err := checkConnection(); err != nil {
+		return err, nil
+	}
+	msgID, _ := req.RequireString("message_id")
+	chat, _ := req.RequireString("chat")
+	if msgID == "" || chat == "" {
+		return mcp.NewToolResultError("Both 'message_id' and 'chat' are required"), nil
+	}
+	filePath, err := wa.DownloadMedia(ctx, msgID, chat)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to download: %v", err)), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Media saved to: %s", filePath)), nil
 }
 
 func handleGetChat(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

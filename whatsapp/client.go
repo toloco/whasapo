@@ -26,15 +26,16 @@ import (
 
 // StoredMessage holds a message.
 type StoredMessage struct {
-	ID        string    `json:"id"`
-	Chat      string    `json:"chat"`
-	Sender    string    `json:"sender"`
-	PushName  string    `json:"push_name"`
-	Text      string    `json:"text"`
-	Timestamp time.Time `json:"timestamp"`
-	IsFromMe  bool      `json:"is_from_me"`
-	IsGroup   bool      `json:"is_group"`
-	MediaType string    `json:"media_type,omitempty"`
+	ID         string    `json:"id"`
+	Chat       string    `json:"chat"`
+	Sender     string    `json:"sender"`
+	PushName   string    `json:"push_name"`
+	Text       string    `json:"text"`
+	Timestamp  time.Time `json:"timestamp"`
+	IsFromMe   bool      `json:"is_from_me"`
+	IsGroup    bool      `json:"is_group"`
+	MediaType  string    `json:"media_type,omitempty"`
+	mediaProto []byte    // not serialized to JSON, used for download
 }
 
 // ChatInfo holds basic chat info.
@@ -135,13 +136,15 @@ func initMessageTable(db *sql.DB) error {
 		is_from_me INTEGER NOT NULL DEFAULT 0,
 		is_group INTEGER NOT NULL DEFAULT 0,
 		media_type TEXT NOT NULL DEFAULT '',
+		media_proto BLOB,
 		PRIMARY KEY (id, chat)
 	)`)
 	if err != nil {
 		return err
 	}
-	// Add media_type column if upgrading from older schema
+	// Add columns if upgrading from older schema
 	db.Exec(`ALTER TABLE messages ADD COLUMN media_type TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE messages ADD COLUMN media_proto BLOB`)
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_chat_ts ON messages(chat, timestamp DESC)`)
 	if err != nil {
 		return err
@@ -224,7 +227,7 @@ func (c *Client) eventHandler(evt interface{}) {
 
 func (c *Client) messageToStored(info types.MessageInfo, msg *waE2E.Message) StoredMessage {
 	text, mediaType := extractTextAndMedia(msg)
-	return StoredMessage{
+	sm := StoredMessage{
 		ID:        string(info.ID),
 		Chat:      info.Chat.String(),
 		Sender:    info.Sender.String(),
@@ -235,6 +238,13 @@ func (c *Client) messageToStored(info types.MessageInfo, msg *waE2E.Message) Sto
 		IsGroup:   info.IsGroup,
 		MediaType: mediaType,
 	}
+	// Store raw proto for media messages so we can download later
+	if mediaType != "" && msg != nil {
+		if data, err := proto.Marshal(msg); err == nil {
+			sm.mediaProto = data
+		}
+	}
+	return sm
 }
 
 func (c *Client) handleHistorySync(data *waHistorySync.HistorySync) {
@@ -278,7 +288,7 @@ func (c *Client) handleHistorySync(data *waHistorySync.HistorySync) {
 				c.names[senderJID] = pushName
 				c.namesMu.Unlock()
 			}
-			c.storeMessage(StoredMessage{
+			sm := StoredMessage{
 				ID:        wmi.GetKey().GetID(),
 				Chat:      chatJID,
 				Sender:    senderJID,
@@ -288,7 +298,13 @@ func (c *Client) handleHistorySync(data *waHistorySync.HistorySync) {
 				IsFromMe:  isFromMe,
 				IsGroup:   isGroup,
 				MediaType: mediaType,
-			})
+			}
+			if mediaType != "" {
+				if data, err := proto.Marshal(wmi.GetMessage()); err == nil {
+					sm.mediaProto = data
+				}
+			}
+			c.storeMessage(sm)
 			count++
 		}
 	}
@@ -307,11 +323,12 @@ func (c *Client) storeMessage(msg StoredMessage) {
 		isGroup = 1
 	}
 	_, err := c.db.Exec(
-		`INSERT INTO messages (id, chat, sender, push_name, text, timestamp, is_from_me, is_group, media_type)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(id, chat) DO UPDATE SET text = excluded.text, push_name = excluded.push_name, media_type = excluded.media_type`,
+		`INSERT INTO messages (id, chat, sender, push_name, text, timestamp, is_from_me, is_group, media_type, media_proto)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id, chat) DO UPDATE SET text = excluded.text, push_name = excluded.push_name, media_type = excluded.media_type,
+		 media_proto = COALESCE(excluded.media_proto, messages.media_proto)`,
 		msg.ID, msg.Chat, msg.Sender, msg.PushName, msg.Text,
-		msg.Timestamp.Unix(), isFromMe, isGroup, msg.MediaType,
+		msg.Timestamp.Unix(), isFromMe, isGroup, msg.MediaType, msg.mediaProto,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "whasapo: failed to store message: %v\n", err)
@@ -385,24 +402,97 @@ func extractTextAndMedia(msg *waE2E.Message) (text string, mediaType string) {
 }
 
 // DownloadMedia downloads media from a message and saves it to disk.
+// Returns the local file path.
 func (c *Client) DownloadMedia(ctx context.Context, msgID, chatJID string) (string, error) {
-	// Look up the message to get its media type
 	var mediaType string
+	var mediaProto []byte
 	err := c.db.QueryRow(
-		`SELECT media_type FROM messages WHERE id = ? AND chat = ?`,
+		`SELECT media_type, media_proto FROM messages WHERE id = ? AND chat = ?`,
 		msgID, chatJID,
-	).Scan(&mediaType)
+	).Scan(&mediaType, &mediaProto)
 	if err != nil {
 		return "", fmt.Errorf("message not found: %w", err)
 	}
 	if mediaType == "" {
 		return "", fmt.Errorf("message has no downloadable media")
 	}
+	if len(mediaProto) == 0 {
+		return "", fmt.Errorf("media metadata not available (message was stored before media download support)")
+	}
 
-	// We need to get the actual protobuf message from whatsmeow's history
-	// Since we don't store the raw proto, we need to re-fetch via the message info
-	// For now, return an error explaining the limitation
-	return "", fmt.Errorf("media download requires the original message object — this is a known limitation being worked on. The message was: %s (type: %s)", msgID, mediaType)
+	// Deserialize the stored protobuf
+	var msg waE2E.Message
+	if err := proto.Unmarshal(mediaProto, &msg); err != nil {
+		return "", fmt.Errorf("failed to decode media info: %w", err)
+	}
+
+	// Get the downloadable message and determine extension
+	var data []byte
+	var ext string
+	switch mediaType {
+	case "image":
+		if im := msg.GetImageMessage(); im != nil {
+			data, err = c.WM.Download(ctx, im)
+			ext = extensionFromMime(im.GetMimetype(), ".jpg")
+		}
+	case "video":
+		if vm := msg.GetVideoMessage(); vm != nil {
+			data, err = c.WM.Download(ctx, vm)
+			ext = extensionFromMime(vm.GetMimetype(), ".mp4")
+		}
+	case "audio":
+		if am := msg.GetAudioMessage(); am != nil {
+			data, err = c.WM.Download(ctx, am)
+			ext = extensionFromMime(am.GetMimetype(), ".ogg")
+		}
+	case "document":
+		if dm := msg.GetDocumentMessage(); dm != nil {
+			data, err = c.WM.Download(ctx, dm)
+			ext = extensionFromMime(dm.GetMimetype(), ".bin")
+			if fn := dm.GetFileName(); fn != "" {
+				ext = filepath.Ext(fn)
+			}
+		}
+	case "sticker":
+		if sm := msg.GetStickerMessage(); sm != nil {
+			data, err = c.WM.Download(ctx, sm)
+			ext = ".webp"
+		}
+	default:
+		return "", fmt.Errorf("unsupported media type: %s", mediaType)
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("download failed: %w", err)
+	}
+	if data == nil {
+		return "", fmt.Errorf("no media content in message")
+	}
+
+	// Save to media directory
+	filename := fmt.Sprintf("%s_%s%s", chatJID, msgID, ext)
+	// Sanitize filename
+	filename = strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ':' || r == '@' {
+			return '_'
+		}
+		return r
+	}, filename)
+	filePath := filepath.Join(c.mediaDir, filename)
+
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		return "", fmt.Errorf("failed to save: %w", err)
+	}
+
+	return filePath, nil
+}
+
+func extensionFromMime(mimeType, fallback string) string {
+	exts, err := mime.ExtensionsByType(mimeType)
+	if err == nil && len(exts) > 0 {
+		return exts[0]
+	}
+	return fallback
 }
 
 // SendFile uploads and sends a file to a WhatsApp contact.
