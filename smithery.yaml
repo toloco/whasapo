@@ -1,0 +1,22 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    default: {}
+    properties:
+      dbPath:
+        type: string
+        description: "Path to the SQLite session database (default: ~/.whasapo/session.db)"
+    description: "Whasapo WhatsApp MCP server configuration"
+  commandFunction:
+    |-
+    (config) => ({
+      command: config.dbPath
+        ? 'whasapo'
+        : 'whasapo',
+      args: ['serve'],
+      env: config.dbPath ? { WHASAPO_DB: config.dbPath } : {}
+    })
+  exampleConfig: {}
