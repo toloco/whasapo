@@ -255,9 +255,9 @@ func cmdServe() {
 	), handleListChats)
 
 	s.AddTool(mcp.NewTool("get_messages",
-		mcp.WithDescription("Get stored WhatsApp messages. Messages are persisted across restarts. Can filter by chat JID or search by contact name or message text."),
+		mcp.WithDescription("Get stored WhatsApp messages. Messages are persisted across restarts. Can filter by chat JID or chat name, and search by contact name or message text."),
 		mcp.WithString("chat",
-			mcp.Description("Chat JID to filter by (omit for all chats)"),
+			mcp.Description("Chat JID or chat/group name to filter by. Names are automatically resolved to JIDs. Examples: '120363xxx@g.us' or 'Family Group'"),
 		),
 		mcp.WithString("query",
 			mcp.Description("Search messages by contact name or text content (case-insensitive)"),

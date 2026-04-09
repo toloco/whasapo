@@ -609,8 +609,53 @@ func (c *Client) SendMessage(ctx context.Context, jidStr, text string) error {
 	return err
 }
 
-// GetMessages returns messages from SQLite, optionally filtered by chat JID or search query.
+// resolveChatFilter resolves a chat name to a JID if needed.
+// If chatFilter contains '@', it's already a JID. Otherwise search by name.
+func (c *Client) resolveChatFilter(chatFilter string) string {
+	if chatFilter == "" || strings.Contains(chatFilter, "@") {
+		return chatFilter
+	}
+	// Search the names cache for a match
+	lower := strings.ToLower(chatFilter)
+	c.namesMu.RLock()
+	for jid, name := range c.names {
+		if strings.Contains(strings.ToLower(name), lower) {
+			c.namesMu.RUnlock()
+			return jid
+		}
+	}
+	c.namesMu.RUnlock()
+
+	// Search stored chats in DB
+	var jid string
+	err := c.db.QueryRow(
+		`SELECT DISTINCT chat FROM messages WHERE push_name LIKE ? LIMIT 1`,
+		"%"+chatFilter+"%",
+	).Scan(&jid)
+	if err == nil && jid != "" {
+		return jid
+	}
+
+	// Not found — treat as a query instead
+	return ""
+}
+
+// GetMessages returns messages from SQLite, optionally filtered by chat JID/name or search query.
 func (c *Client) GetMessages(chatFilter, query string, limit int) []StoredMessage {
+	// If chatFilter looks like a name (no @), resolve it to a JID
+	if chatFilter != "" && !strings.Contains(chatFilter, "@") {
+		resolved := c.resolveChatFilter(chatFilter)
+		if resolved != "" {
+			chatFilter = resolved
+		} else {
+			// Couldn't resolve — treat the name as a search query instead
+			if query == "" {
+				query = chatFilter
+			}
+			chatFilter = ""
+		}
+	}
+
 	var rows *sql.Rows
 	var err error
 	if chatFilter != "" && query != "" {
