@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.7.0
+
+- **History sync** — past messages are loaded automatically on connect. No more empty inbox.
+- **Send files** — new `send_file` tool for images, videos, documents, and audio.
+- **Download media** — new `download_media` tool saves images/videos/docs to disk from messages.
+- **Chat details** — new `get_chat` tool shows group info, participants, topic, and message count.
+- **Tests** — 37 unit and integration tests covering message parsing, SQLite storage, and version comparison.
+- **CI test pipeline** — tests run on every push and PR, and before releases.
+
 ## v0.6.0
 
 - **Cross-platform** — now supports macOS, Linux (amd64/arm64), and Windows (amd64).
