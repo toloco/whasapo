@@ -406,11 +406,8 @@ func cmdUninstall() {
 // --- tool handlers ---
 
 func checkConnection() *mcp.CallToolResult {
-	if wa.IsLoggedOut() {
-		return mcp.NewToolResultError("WhatsApp session expired. Run 'whasapo pair' to re-link your account.")
-	}
-	if !wa.IsReady() {
-		return mcp.NewToolResultError("WhatsApp is reconnecting. Try again in a few seconds.")
+	if msg := wa.ConnectionError(); msg != "" {
+		return mcp.NewToolResultError(msg)
 	}
 	return nil
 }
@@ -454,6 +451,9 @@ func handleGetMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
 	limit := int(req.GetFloat("limit", 50))
 	if limit <= 0 {
 		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
 	}
 	msgs := wa.GetMessages(chat, query, limit)
 	if len(msgs) == 0 {

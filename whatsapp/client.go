@@ -70,12 +70,13 @@ type Client struct {
 	WM        *whatsmeow.Client
 	Container *sqlstore.Container
 	db        *sql.DB
-	connected chan struct{}
-	ready     atomic.Bool
-	loggedOut atomic.Bool
-	names     map[string]string
-	namesMu   sync.RWMutex
-	mediaDir  string
+	firstConn    chan struct{} // closed on first successful connection
+	ready        atomic.Bool
+	loggedOut    atomic.Bool
+	disconnectAt atomic.Int64 // unix timestamp of last disconnect, 0 if connected
+	names        map[string]string
+	namesMu      sync.RWMutex
+	mediaDir     string
 }
 
 const dsn = "file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
@@ -116,7 +117,7 @@ func NewClient(dbPath string) (*Client, error) {
 		WM:        wm,
 		Container: container,
 		db:        db,
-		connected: make(chan struct{}),
+		firstConn: make(chan struct{}),
 		names:     make(map[string]string),
 		mediaDir:  mediaDir,
 	}
@@ -150,7 +151,12 @@ func initMessageTable(db *sql.DB) error {
 		return err
 	}
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(timestamp DESC)`)
-	return err
+	if err != nil {
+		return err
+	}
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_pushname ON messages(push_name)`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_media ON messages(media_type)`)
+	return nil
 }
 
 // IsPaired returns true if we have a stored session.
@@ -163,8 +169,9 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err := c.WM.Connect(); err != nil {
 		return err
 	}
+	// Wait for the first Connected event
 	select {
-	case <-c.connected:
+	case <-c.firstConn:
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("timeout waiting for WhatsApp connection")
@@ -189,25 +196,53 @@ func (c *Client) IsLoggedOut() bool {
 	return c.loggedOut.Load()
 }
 
+// ConnectionError returns a user-friendly error message based on connection state.
+// Returns empty string if connected.
+func (c *Client) ConnectionError() string {
+	if c.loggedOut.Load() {
+		return "WhatsApp session expired. Run 'whasapo pair' to re-link your account."
+	}
+	if !c.ready.Load() {
+		ts := c.disconnectAt.Load()
+		if ts > 0 {
+			since := time.Since(time.Unix(ts, 0))
+			if since > 30*time.Second {
+				return "WhatsApp connection lost. Check your internet connection or run 'whasapo pair' to re-link."
+			}
+		}
+		return "WhatsApp is reconnecting. Try again in a few seconds."
+	}
+	return ""
+}
+
 func (c *Client) eventHandler(evt interface{}) {
 	switch v := evt.(type) {
 	case *events.Connected:
-		c.ready.Store(true)
-		fmt.Fprintf(os.Stderr, "whasapo: whatsapp connected\n")
-		select {
-		case <-c.connected:
-		default:
-			close(c.connected)
+		wasDisconnected := !c.ready.Swap(true)
+		c.disconnectAt.Store(0)
+		if wasDisconnected {
+			select {
+			case <-c.firstConn:
+				// Already connected before — this is a reconnection
+				fmt.Fprintf(os.Stderr, "whasapo: reconnected\n")
+			default:
+				// First connection
+				close(c.firstConn)
+			}
 		}
 	case *events.Disconnected:
-		c.ready.Store(false)
-		fmt.Fprintf(os.Stderr, "whasapo: whatsapp disconnected, will reconnect automatically\n")
+		if c.ready.Swap(false) {
+			// Only log on transition from connected → disconnected (debounce)
+			c.disconnectAt.Store(time.Now().Unix())
+			fmt.Fprintf(os.Stderr, "whasapo: disconnected, reconnecting...\n")
+		}
 	case *events.LoggedOut:
 		c.ready.Store(false)
 		c.loggedOut.Store(true)
 		fmt.Fprintf(os.Stderr, "whasapo: session expired — run 'whasapo pair' to re-link\n")
 	case *events.StreamReplaced:
 		c.ready.Store(false)
+		c.disconnectAt.Store(time.Now().Unix())
 		fmt.Fprintf(os.Stderr, "whasapo: connection replaced by another client\n")
 	case *events.HistorySync:
 		c.handleHistorySync(v.Data)
